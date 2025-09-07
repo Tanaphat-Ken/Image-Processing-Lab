@@ -1,20 +1,29 @@
 """
-Quick Test Runner for Lab6 Competition Evaluation
-===============================================
+Lab6 Submission Creator with Organized Folder Structure
+======================================================
 
-This script can be run directly from the notebook or command line
-to evaluate your trained autoencoder model.
+Creates organized submission package with proper folder structure:
+- submissions/submission_YYYYMMDD_HHMMSS/
+  ├── images/              # Processed images for submission  
+  ├── evaluation/          # Model evaluation results
+  ├── README.txt           # Package documentation
+  └── submission_summary.txt
+
+Usage:
+    python create_submission_organized.py
+    python create_submission_organized.py --submission-name "my_submission"
 """
 
 import torch
 import os
 import sys
 import zipfile
-import glob
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
 from datetime import datetime
+import json
+import argparse
 
 # Add current directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -22,8 +31,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 try:
     from test_competition import (
         extract_test_data, load_model, TestDataset, 
-        evaluate_model, save_results, print_competition_summary,
-        create_visualizations
+        evaluate_model, save_results, print_competition_summary
     )
 except ImportError as e:
     print(f"❌ Import error: {e}")
@@ -31,75 +39,6 @@ except ImportError as e:
     sys.exit(1)
 
 from torch.utils.data import DataLoader
-
-def quick_test(model_path="best_autoencoder.pth", test_zip="test.zip", output_dir="test_results"):
-    """
-    Quick test function that can be called from notebook or script
-    
-    Args:
-        model_path (str): Path to the trained model (.pth file)
-        test_zip (str): Path to the test data zip file
-        output_dir (str): Directory to save results
-    
-    Returns:
-        dict: Summary of evaluation results
-    """
-    
-    print("🚀 Starting Competition Evaluation...")
-    print(f"📝 Model: {model_path}")
-    print(f"📊 Test Data: {test_zip}")
-    print(f"💾 Output: {output_dir}")
-    print("-" * 50)
-    
-    # Setup device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"🔧 Device: {device}")
-    
-    # Check if files exist
-    if not os.path.exists(model_path):
-        print(f"❌ Model file not found: {model_path}")
-        return None
-    
-    if not os.path.exists(test_zip):
-        print(f"❌ Test data not found: {test_zip}")
-        return None
-    
-    try:
-        # Extract test data
-        test_image_paths = extract_test_data(test_zip, extract_dir="test_images_temp")
-        
-        if len(test_image_paths) == 0:
-            print("❌ No images found in test data")
-            return None
-        
-        # Create test dataset and loader
-        test_dataset = TestDataset(test_image_paths, resize=128)
-        test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False, num_workers=2)
-        
-        # Load model
-        model = load_model(model_path, device)
-        
-        # Evaluate model
-        all_metrics, sample_results = evaluate_model(model, test_loader, device, save_samples=True)
-        
-        # Save results
-        summary = save_results(all_metrics, sample_results, output_dir)
-        
-        # Print summary
-        print_competition_summary(summary)
-        
-        # Clean up temporary files
-        import shutil
-        if os.path.exists("test_images_temp"):
-            shutil.rmtree("test_images_temp")
-        
-        return summary
-        
-    except Exception as e:
-        print(f"❌ Error during evaluation: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
 
 
 def create_submission_images(model_path="best_autoencoder.pth", test_zip="test.zip", 
@@ -160,44 +99,61 @@ def create_submission_images(model_path="best_autoencoder.pth", test_zip="test.z
         print("🔄 Loading model...")
         model = load_model(model_path, device)
         
-        # Step 1: Run evaluation (for metrics)
-        print("📈 Running evaluation for metrics...")
-        all_metrics, sample_results = evaluate_model(model, test_loader, device, save_samples=True)
+        # Skip evaluation for now - go directly to submission creation
+        print("⚡ Skipping evaluation - going directly to submission creation...")
+        all_metrics = []
+        sample_results = []
+        summary = {
+            'avg_psnr': 'N/A',
+            'avg_ssim': 'N/A', 
+            'total_images': len(test_image_paths)
+        }
         
-        # Save evaluation results
-        summary = save_results(all_metrics, sample_results, evaluation_dir)
-        print_competition_summary(summary)
-        
-        # Step 2: Generate submission images
+        # Step 2: Generate submission images (Individual processing approach)
         print("\n🎨 Generating submission images...")
         model.eval()
         submission_count = 0
         
+        # Import transforms at the top to avoid issues
+        import torchvision.transforms as transforms
+        from PIL import Image as PILImage
+        
+        # Create transform once
+        transform = transforms.Compose([
+            transforms.Resize((128, 128)),
+            transforms.ToTensor()
+        ])
+        
+        print("📝 Processing images individually for reliable submission generation...")
+        
         with torch.no_grad():
-            progress_bar = tqdm(test_loader, desc='Creating Submissions', unit='batch')
+            progress_bar = tqdm(test_image_paths, desc='Creating Submissions', unit='image')
             
-            for batch_idx, batch in enumerate(progress_bar):
-                # Handle different batch formats from TestDataset
-                if isinstance(batch, tuple) and len(batch) >= 2:
-                    images = batch[0]  # Input images
-                    # Try to get filenames if available
-                    if len(batch) >= 3:
-                        filenames = batch[2] if isinstance(batch[2], (list, tuple)) else [f"image_{batch_idx}_{i}.jpg" for i in range(images.size(0))]
+            for img_path in progress_bar:
+                try:
+                    # Load image
+                    image = PILImage.open(img_path).convert('RGB')
+                    
+                    # Transform to match model input
+                    image_tensor = transform(image).unsqueeze(0)  # Add batch dimension
+                    
+                    # Move to device - ensure it's a tensor
+                    if isinstance(image_tensor, torch.Tensor):
+                        image_tensor = image_tensor.to(device)
                     else:
-                        filenames = [f"image_{batch_idx}_{i}.jpg" for i in range(images.size(0))]
-                else:
-                    images = batch
-                    filenames = [f"image_{batch_idx}_{i}.jpg" for i in range(images.size(0))]
-                
-                images = images.to(device)
-                
-                # Get model predictions
-                predictions = model(images)
-                
-                # Save each image in the batch
-                for i in range(predictions.size(0)):
-                    # Convert tensor to numpy
-                    pred_img = predictions[i].cpu().numpy()
+                        print(f"⚠️ Warning: Expected tensor but got {type(image_tensor)} for {img_path}")
+                        continue
+                    
+                    # Get model prediction
+                    prediction = model(image_tensor)
+                    
+                    # Ensure prediction is a tensor
+                    if not isinstance(prediction, torch.Tensor):
+                        print(f"⚠️ Warning: Model output is not a tensor for {img_path}")
+                        continue
+                    
+                    # Convert prediction to numpy
+                    pred_img = prediction[0].cpu().numpy()  # Remove batch dimension
                     
                     # Convert from CHW to HWC format
                     pred_img = pred_img.transpose(1, 2, 0)
@@ -209,25 +165,24 @@ def create_submission_images(model_path="best_autoencoder.pth", test_zip="test.z
                     pred_img = (pred_img * 255).astype(np.uint8)
                     
                     # Convert to PIL Image
-                    pred_pil = Image.fromarray(pred_img)
+                    pred_pil = PILImage.fromarray(pred_img)
                     
-                    # Get original filename from test image path
-                    try:
-                        original_path = test_image_paths[submission_count]
-                        original_filename = os.path.basename(original_path)
-                    except IndexError:
-                        # Fallback filename
-                        original_filename = f"submission_{submission_count:04d}.jpg"
+                    # Get original filename
+                    original_filename = os.path.basename(img_path)
                     
                     # Save with original filename
                     save_path = os.path.join(submission_dir, original_filename)
                     pred_pil.save(save_path, quality=95)
                     
                     submission_count += 1
-                
-                progress_bar.set_postfix(
-                    saved=f"{submission_count}/{len(test_dataset)}"
-                )
+                    
+                    progress_bar.set_postfix(
+                        saved=f"{submission_count}/{len(test_image_paths)}"
+                    )
+                    
+                except Exception as e:
+                    print(f"⚠️ Error processing {img_path}: {e}")
+                    continue
         
         # Clean up temporary files
         import shutil
@@ -244,7 +199,6 @@ def create_submission_images(model_path="best_autoencoder.pth", test_zip="test.z
         }
         
         # Save submission info
-        import json
         info_path = os.path.join(submission_dir, "submission_info.json")
         with open(info_path, 'w') as f:
             json.dump(submission_info, f, indent=2)
@@ -351,9 +305,11 @@ def quick_submission(model_path="best_autoencoder.pth", test_zip="test.zip", sub
                 f.write(f"  • Total test images: {eval_data.get('total_images', 'N/A')}\n\n")
             
             f.write("🚀 How to Submit:\n")
-            f.write("1. Zip the 'images' folder contents\n")
-            f.write("2. Submit the zip file to the competition\n")
-            f.write("3. Include evaluation results if requested\n")
+            f.write("1. Navigate to the 'images' folder\n")
+            f.write("2. Select all images (Ctrl+A)\n")
+            f.write("3. Create a zip file (right-click -> Send to -> Compressed folder)\n")
+            f.write("4. Submit the zip file to the competition\n")
+            f.write("5. Include evaluation results if requested\n")
         
         # Create submission summary
         summary_path = os.path.join(submission_full_path, "submission_summary.txt")
@@ -381,11 +337,13 @@ def quick_submission(model_path="best_autoencoder.pth", test_zip="test.zip", sub
         print(f"   1. Navigate to: {images_dir}")
         print(f"   2. Select all images and create a zip file")
         print(f"   3. Submit the zip file")
+        print(f"\n💡 Tip: Right-click in the images folder -> Send to -> Compressed (zipped) folder")
         
         return submission_full_path
     else:
         print("❌ Failed to create submission package")
         return None
+
 
 def test_with_existing_model():
     """Test with your existing trained model"""
@@ -405,10 +363,10 @@ def test_with_existing_model():
             break
     
     if model_path is None:
-        print("❌ Could not find trained model. Available files:")
-        for f in os.listdir("."):
-            if f.endswith(".pth"):
-                print(f"   - {f}")
+        print("❌ No trained model found!")
+        print("Available candidates checked:")
+        for candidate in model_candidates:
+            print(f"  - {candidate}")
         return None
     
     # Try to find test data
@@ -425,37 +383,49 @@ def test_with_existing_model():
             break
     
     if test_path is None:
-        print("❌ Could not find test data. Available zip files:")
-        for f in os.listdir("."):
-            if f.endswith(".zip"):
-                print(f"   - {f}")
+        print("❌ No test data found!")
+        print("Available candidates checked:")
+        for candidate in test_candidates:
+            print(f"  - {candidate}")
         return None
     
     print(f"✅ Found model: {model_path}")
     print(f"✅ Found test data: {test_path}")
     
-    # Run evaluation
-    return quick_test(model_path, test_path)
+    return model_path, test_path
+
 
 if __name__ == "__main__":
-    # Can be run as script
-    import argparse
+    print("🚀 Lab6 Organized Submission Creator")
+    print("=" * 50)
     
-    parser = argparse.ArgumentParser(description='Quick test runner')
-    parser.add_argument('--model', type=str, help='Model path')
-    parser.add_argument('--test', type=str, help='Test data path')
-    parser.add_argument('--output', type=str, default='test_results', help='Output directory')
+    parser = argparse.ArgumentParser(description='Lab6 Organized Submission Creator')
+    parser.add_argument('--mode', choices=['auto', 'manual'], default='auto',
+                       help='Mode: auto (find files automatically), manual (specify paths)')
+    parser.add_argument('--model', default='best_autoencoder.pth', help='Model path')
+    parser.add_argument('--test-zip', default='test.zip', help='Test data zip')
+    parser.add_argument('--submission-name', help='Custom submission folder name')
     
     args = parser.parse_args()
     
-    if args.model and args.test:
-        # Use provided paths
-        summary = quick_test(args.model, args.test, args.output)
-    else:
+    if args.mode == 'auto':
         # Auto-detect files
-        summary = test_with_existing_model()
-    
-    if summary:
-        print("\n✅ Evaluation completed successfully!")
+        result = test_with_existing_model()
+        if result:
+            model_path, test_path = result
+            print(f"🔍 Auto-detected: {model_path}, {test_path}")
+            
+            submission_result = quick_submission(model_path, test_path, args.submission_name)
+            if submission_result:
+                print(f"\n✅ Auto-submission completed: {submission_result}")
+            else:
+                print("\n❌ Auto-submission failed!")
+        else:
+            print("❌ Auto-detection failed! Try manual mode.")
     else:
-        print("\n❌ Evaluation failed!")
+        # Manual mode - use specified paths
+        submission_result = quick_submission(args.model, args.test_zip, args.submission_name)
+        if submission_result:
+            print(f"\n✅ Submission package created: {submission_result}")
+        else:
+            print("\n❌ Submission creation failed!")
